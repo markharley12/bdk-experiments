@@ -63,15 +63,35 @@ fn main() {
     // Get script from address
     let script = address.script_pubkey();
 
-    // Get all transactions for this address
-    let txs = match blockchain.scripthash_txs(&script, None) {
-        Ok(txs) => txs,
-        Err(e) => {
-            eprintln!("Error fetching transactions: {}", e);
-            eprintln!("\nNote: This tool requires internet access to query the blockchain.");
-            return;
+    // Get all transactions for this address (with pagination)
+    let mut txs = Vec::new();
+    let mut last_seen = None;
+
+    loop {
+        let batch = match blockchain.scripthash_txs(&script, last_seen) {
+            Ok(batch) => batch,
+            Err(e) => {
+                eprintln!("Error fetching transactions: {}", e);
+                eprintln!("\nNote: This tool requires internet access to query the blockchain.");
+                return;
+            }
+        };
+
+        if batch.is_empty() {
+            break;
         }
-    };
+
+        last_seen = Some(batch.last().unwrap().txid);
+        let batch_len = batch.len();
+        txs.extend(batch);
+
+        // If we got fewer than the page size, we're done
+        if batch_len < 25 {
+            break;
+        }
+    }
+
+    eprintln!("DEBUG: Fetched {} total transactions", txs.len());
 
     // Track all outputs and which ones are spent
     use std::collections::{HashMap, HashSet};
@@ -88,12 +108,9 @@ fn main() {
             if output.scriptpubkey == script {
                 let key = (tx.txid.to_string(), vout_index as u32);
                 outputs.insert(key, (output.value, tx.status.confirmed));
-                eprintln!("DEBUG: Found output: {}:{} = {} sats", tx.txid, vout_index, output.value);
             }
         }
     }
-
-    eprintln!("DEBUG: Total outputs found: {}", outputs.len());
 
     // Second pass: mark spent outputs
     for tx in &txs {
@@ -102,14 +119,14 @@ fn main() {
                 if prevout.scriptpubkey == script {
                     let key = (input.txid.to_string(), input.vout);
                     spent_outputs.insert(key);
-                    eprintln!("DEBUG: Marked as spent: {}:{}", input.txid, input.vout);
                 }
             }
         }
     }
 
-    eprintln!("DEBUG: Total spent outputs: {}", spent_outputs.len());
-    eprintln!("DEBUG: Unspent outputs: {}", outputs.len() - spent_outputs.len());
+    let unspent_count = outputs.iter().filter(|(k, _)| !spent_outputs.contains(k)).count();
+    eprintln!("DEBUG: Total outputs: {}, Spent: {}, Unspent UTXOs: {}",
+              outputs.len(), spent_outputs.len(), unspent_count);
 
     // Calculate balance from unspent outputs
     let mut confirmed_balance: u64 = 0;
@@ -118,7 +135,6 @@ fn main() {
     for (outpoint, (value, is_confirmed)) in &outputs {
         if !spent_outputs.contains(outpoint) {
             // This output is unspent
-            eprintln!("DEBUG: Unspent UTXO: {}:{} = {} sats (confirmed: {})", outpoint.0, outpoint.1, value, is_confirmed);
             if *is_confirmed {
                 confirmed_balance += value;
             } else {
