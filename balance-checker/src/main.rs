@@ -88,9 +88,12 @@ fn main() {
             if output.scriptpubkey == script {
                 let key = (tx.txid.to_string(), vout_index as u32);
                 outputs.insert(key, (output.value, tx.status.confirmed));
+                eprintln!("DEBUG: Found output: {}:{} = {} sats", tx.txid, vout_index, output.value);
             }
         }
     }
+
+    eprintln!("DEBUG: Total outputs found: {}", outputs.len());
 
     // Second pass: mark spent outputs
     for tx in &txs {
@@ -99,10 +102,14 @@ fn main() {
                 if prevout.scriptpubkey == script {
                     let key = (input.txid.to_string(), input.vout);
                     spent_outputs.insert(key);
+                    eprintln!("DEBUG: Marked as spent: {}:{}", input.txid, input.vout);
                 }
             }
         }
     }
+
+    eprintln!("DEBUG: Total spent outputs: {}", spent_outputs.len());
+    eprintln!("DEBUG: Unspent outputs: {}", outputs.len() - spent_outputs.len());
 
     // Calculate balance from unspent outputs
     let mut confirmed_balance: u64 = 0;
@@ -111,6 +118,7 @@ fn main() {
     for (outpoint, (value, is_confirmed)) in &outputs {
         if !spent_outputs.contains(outpoint) {
             // This output is unspent
+            eprintln!("DEBUG: Unspent UTXO: {}:{} = {} sats (confirmed: {})", outpoint.0, outpoint.1, value, is_confirmed);
             if *is_confirmed {
                 confirmed_balance += value;
             } else {
