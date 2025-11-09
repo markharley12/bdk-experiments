@@ -73,32 +73,48 @@ fn main() {
         }
     };
 
-    // Calculate balance
-    let mut confirmed_balance: u64 = 0;
-    let mut unconfirmed_balance: u64 = 0;
+    // Track all outputs and which ones are spent
+    use std::collections::{HashMap, HashSet};
 
+    // Map of (txid, vout) -> (value, confirmed)
+    let mut outputs: HashMap<(String, u32), (u64, bool)> = HashMap::new();
+
+    // Set of spent outputs (txid, vout)
+    let mut spent_outputs: HashSet<(String, u32)> = HashSet::new();
+
+    // First pass: collect all outputs belonging to this address
     for tx in &txs {
-        let tx_confirmed = tx.status.confirmed;
-
-        for output in &tx.vout {
+        for (vout_index, output) in tx.vout.iter().enumerate() {
             if output.scriptpubkey == script {
-                if tx_confirmed {
-                    confirmed_balance += output.value;
-                } else {
-                    unconfirmed_balance += output.value;
-                }
+                let key = (tx.txid.to_string(), vout_index as u32);
+                outputs.insert(key, (output.value, tx.status.confirmed));
             }
         }
+    }
 
+    // Second pass: mark spent outputs
+    for tx in &txs {
         for input in &tx.vin {
             if let Some(prevout) = &input.prevout {
                 if prevout.scriptpubkey == script {
-                    if tx_confirmed {
-                        confirmed_balance = confirmed_balance.saturating_sub(prevout.value);
-                    } else {
-                        unconfirmed_balance = unconfirmed_balance.saturating_sub(prevout.value);
-                    }
+                    let key = (input.txid.to_string(), input.vout);
+                    spent_outputs.insert(key);
                 }
+            }
+        }
+    }
+
+    // Calculate balance from unspent outputs
+    let mut confirmed_balance: u64 = 0;
+    let mut unconfirmed_balance: u64 = 0;
+
+    for (outpoint, (value, is_confirmed)) in &outputs {
+        if !spent_outputs.contains(outpoint) {
+            // This output is unspent
+            if *is_confirmed {
+                confirmed_balance += value;
+            } else {
+                unconfirmed_balance += value;
             }
         }
     }
@@ -121,7 +137,7 @@ fn main() {
         if txs.is_empty() {
             println!("  No transactions found");
         } else {
-            for tx in txs {
+            for tx in &txs {
                 println!("\n  TXID: {}", tx.txid);
                 if tx.status.confirmed {
                     if let Some(height) = tx.status.block_height {
